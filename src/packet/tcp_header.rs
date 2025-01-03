@@ -1,11 +1,13 @@
-use std::net::Ipv4Addr;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use crate::utils::sum_bytes_as_u32;
 
-const TCP_FIN: u8 = 0x01;
-const TCP_SYN: u8 = 0x02;
-const TCP_RST: u8 = 0x04;
-const TCP_PSH: u8 = 0x08;
-const TCP_ACK: u8 = 0x10;
+pub const TCP_FIN: u8 = 0x01;
+pub const TCP_SYN: u8 = 0x02;
+pub const TCP_RST: u8 = 0x04;
+pub const TCP_PSH: u8 = 0x08;
+pub const TCP_ACK: u8 = 0x10;
+#[derive(Debug)]
 pub struct TcpHeader{
     pub source_port: u16,
     pub dest_port: u16,
@@ -43,8 +45,8 @@ impl TcpHeader{
         bytes.put_u32(self.seq_num);
         bytes.put_u32(self.ack_num);
 
-        let mut drf = (self.data_offset << 12) as u16;
-        drf |= (self.reserved << 9) as u16;
+        let mut drf = (self.data_offset as u16) << 12;
+        drf |= (self.reserved as u16) << 9 ;
         drf |= self.flags as u16;
         bytes.put_u16(drf);
 
@@ -56,6 +58,7 @@ impl TcpHeader{
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Option<Self>{
+        println!("decaps : {:?}", bytes);
         if bytes.len() < 20 {
             return None;
         }
@@ -79,7 +82,43 @@ impl TcpHeader{
         })
     }
 
-    pub fn calculate_checksum(&self, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, data: &[u8]) -> u16{
+
+
+    pub fn calculate_checksum(&mut self, source_ip: IpAddr, dest_ip: IpAddr, payload: &[u8]) {
+        match (source_ip, dest_ip) {
+            (IpAddr::V4(source_ip), IpAddr::V4(dest_ip)) => {self.calculate_v4_checksum(source_ip, dest_ip, payload);},
+            (IpAddr::V6(source_ip), IpAddr::V6(dest_ip)) => {self.calculate_v6_checksum(source_ip, dest_ip, payload);},
+            _ => {panic!("Source and destination IP addresses must be of the same version");}
+        };
+    }
+
+    fn calculate_v4_checksum(&mut self, source_ip: Ipv4Addr, dest_ip: Ipv4Addr, payload: &[u8]) {
+        let mut data: u32 = 0;
+
+        let header_as_bytes: Vec<u8> = self.to_bytes();
+        data += u16::from_be_bytes(source_ip.octets()[0..2].try_into().unwrap()) as u32;
+        data += u16::from_be_bytes(source_ip.octets()[2..4].try_into().unwrap()) as u32;
+        data += u16::from_be_bytes(dest_ip.octets()[0..2].try_into().unwrap()) as u32;
+        data += u16::from_be_bytes(dest_ip.octets()[2..4].try_into().unwrap()) as u32;
+
+
+        data += 6u32;
+        data += header_as_bytes.len() as u32 + payload.len() as u32;
+
+        data += sum_bytes_as_u32(&header_as_bytes);
+        data += sum_bytes_as_u32(&payload);
+
+        while data >> 16 != 0 {
+            data = (data & 0xFFFF) + (data >> 16);
+        }
+
+        self.checksum = !(data as u16)
+    }
+
+    fn calculate_v6_checksum(&self, source_ip: Ipv6Addr, dest_ip: Ipv6Addr, payload: &[u8]) -> u16{
         0
     }
+
+
+
 }
